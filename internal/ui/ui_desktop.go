@@ -17,6 +17,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -114,13 +115,25 @@ func (u *UserInterface) Run(game Game, options *RunOptions) error {
 	if b != nil {
 		return b.run(game, options)
 	}
+	if sdl2BackendRequested() {
+		sb, err := maybeNewSDL2Backend(u)
+		if err != nil {
+			return fmt.Errorf("ui: the SDL2 backend was requested but is not available: %w", err)
+		}
+		return sb.run(game, options)
+	}
 	if b := maybeNewGLFWBackend(u); b != nil {
 		return b.run(game, options)
 	}
-	// Fall back to a framebuffer device where there is no window system.
+	// Where there is no window system, prefer SDL2, which presents through
+	// KMS/DRM, and fall back to a framebuffer device.
+	sb, sdlErr := maybeNewSDL2Backend(u)
+	if sdlErr == nil {
+		return sb.run(game, options)
+	}
 	fb, err := maybeNewFbdevBackend(u)
 	if err != nil {
-		return fmt.Errorf("ui: no window system is available: %w", err)
+		return fmt.Errorf("ui: no window system is available: %w", errors.Join(sdlErr, err))
 	}
 	return fb.run(game, options)
 }
