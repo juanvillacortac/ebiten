@@ -76,6 +76,11 @@ type sdl2Backend struct {
 
 	frameCh chan struct{}
 
+	// idlePoll is how long FPSModeVsyncOffMinimum waits between event polls.
+	// It doubles while nothing happens, up to maxIdlePoll, and goes back to a
+	// frame's worth when a frame runs.
+	idlePoll time.Duration
+
 	monitor *Monitor
 
 	// inputState and the raw cursor position are guarded by mu.
@@ -102,6 +107,7 @@ func maybeNewSDL2Backend(u *UserInterface) (*sdl2Backend, error) {
 		focused:       true,
 		gamepads:      newSDL2Gamepads(),
 		frameCh:       make(chan struct{}, 1),
+		idlePoll:      minIdlePoll,
 	}
 	b.monitor = &Monitor{virtual: b}
 	return b, nil
@@ -303,6 +309,18 @@ func (b *sdl2Backend) loopGame() error {
 // cannot see (its Update and Draw are short) are here.
 const slowFrame = 40 * time.Millisecond
 
+// The bounds of sdl2Backend.idlePoll. SDL_WaitEvent cannot replace polling
+// here: with a game controller open, or on video drivers without a native wait
+// such as KMSDRM, SDL2 implements it as a loop that polls every millisecond.
+// Instead, FPSModeVsyncOffMinimum blocks on ScheduleFrame and polls for events
+// less and less often while the application is idle: a static application
+// wakes up 4 times a second instead of 60, at the cost of up to 250ms of
+// latency for the first event after a long idle.
+const (
+	minIdlePoll = time.Second / 60
+	maxIdlePoll = time.Second / 4
+)
+
 // lastSwap is how long the last SDL_GL_SwapWindow took, in nanoseconds.
 var lastSwap atomic.Int64
 
@@ -328,17 +346,22 @@ func (b *sdl2Backend) updateGame() error {
 			return RegularTermination
 		}
 		// In this mode a frame runs only when something asks for one. An event
-		// asks for one too, so keep polling while waiting.
+		// asks for one too, so keep polling while waiting, less often the
+		// longer nothing happens.
 		if FPSModeType(b.fpsMode.Load()) != FPSModeVsyncOffMinimum {
 			break
 		}
+		timer := time.NewTimer(b.idlePoll)
 		select {
 		case <-b.frameCh:
-		case <-time.After(time.Second / 60):
+			timer.Stop()
+		case <-timer.C:
+			b.idlePoll = min(2*b.idlePoll, maxIdlePoll)
 			continue
 		}
 		break
 	}
+	b.idlePoll = minIdlePoll
 
 	polled = time.Now()
 	if err := gamepad.Update(0, b.gamepads.states); err != nil {
@@ -371,7 +394,9 @@ func (b *sdl2Backend) pollOnMainThread() {
 	}
 
 	b.updateSizesOnMainThread()
-	b.gamepads.snapshot()
+	if b.gamepads.snapshot() {
+		b.ScheduleFrame()
+	}
 }
 
 func (b *sdl2Backend) updateSizesOnMainThread() {

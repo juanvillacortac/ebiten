@@ -36,6 +36,12 @@ type sdl2Gamepads struct {
 	controllers []*sdl2Controller
 	states      []gamepad.VirtualGamepadState
 	vibrations  []gamepad.VirtualGamepadVibration
+
+	// releasePending is set when the last snapshot showed a tap that had
+	// already been released (see sdl2Controller.pressedSince): the next
+	// snapshot shows the release, and a frame must see it, or the next tap of
+	// the same button would not be a new press.
+	releasePending bool
 }
 
 // sdl2Controller is an open game controller. Its ID is the gamepad ID the game
@@ -49,6 +55,13 @@ type sdl2Controller struct {
 
 	axes    []float64
 	buttons []bool
+	// pressedSince records the buttons pressed since the last snapshot, and
+	// triggerSince the furthest each trigger went: a press and its release
+	// can both land between two snapshots (in FPSModeVsyncOffMinimum, polls can
+	// be 250ms apart), and the snapshot alone would miss that tap. A latched
+	// button reads pressed for one snapshot.
+	pressedSince []bool
+	triggerSince []float64
 	// hasAxes and hasButtons report what the controller's mapping has.
 	hasAxes    []bool
 	hasButtons []bool
@@ -73,6 +86,22 @@ func (g *sdl2Gamepads) handleEvent(ev *sdl2.Event) bool {
 		for _, c := range g.controllers {
 			if c.instanceID == ev.ControllerDevice() {
 				c.readMapping()
+			}
+		}
+	case sdl2.EventControllerButtonDown:
+		for _, c := range g.controllers {
+			if b := ev.ControllerButton(); c.instanceID == ev.ControllerDevice() && b < len(c.pressedSince) {
+				c.pressedSince[b] = true
+			}
+		}
+	case sdl2.EventControllerAxisMotion:
+		a := ev.ControllerAxis()
+		if a != sdl2.ControllerAxisTriggerLeft && a != sdl2.ControllerAxisTriggerRight {
+			return true
+		}
+		for _, c := range g.controllers {
+			if c.instanceID == ev.ControllerDevice() {
+				c.triggerSince[a] = max(c.triggerSince[a], float64(ev.ControllerAxisValue())/32767)
 			}
 		}
 	default:
@@ -123,6 +152,8 @@ func (g *sdl2Gamepads) open(deviceIndex int) {
 		guid:            gc.GUID(),
 		axes:            make([]float64, sdl2.ControllerAxisCount),
 		buttons:         make([]bool, sdl2.ControllerButtonCount),
+		pressedSince:    make([]bool, sdl2.ControllerButtonCount),
+		triggerSince:    make([]float64, sdl2.ControllerAxisCount),
 		hasAxes:         make([]bool, sdl2.ControllerAxisCount),
 		hasButtons:      make([]bool, sdl2.ControllerButtonCount),
 		standardAxes:    map[gamepaddb.StandardAxis]float64{},
@@ -179,10 +210,17 @@ func (g *sdl2Gamepads) rumble() {
 
 // snapshot reads every controller's state into states. It must be called after
 // the events are polled.
-func (g *sdl2Gamepads) snapshot() {
+// snapshot reads the controllers, and reports whether a frame is needed even
+// without events: to show the release of a tap that the previous snapshot
+// latched.
+func (g *sdl2Gamepads) snapshot() bool {
+	needFrame := g.releasePending
+	g.releasePending = false
 	g.states = g.states[:0]
 	for _, c := range g.controllers {
-		c.snapshot()
+		if c.snapshot() {
+			g.releasePending = true
+		}
 		g.states = append(g.states, gamepad.VirtualGamepadState{
 			ID:              c.id,
 			SDLID:           c.guid,
@@ -193,6 +231,7 @@ func (g *sdl2Gamepads) snapshot() {
 			StandardButtons: c.standardButtons,
 		})
 	}
+	return needFrame
 }
 
 // sdl2StandardButtons maps the standard buttons to SDL's controller buttons.
@@ -223,13 +262,24 @@ var sdl2StandardButtons = [...]struct {
 // pressed, as the standard gamepad of the Web defines.
 const triggerPressThreshold = 30.0 / 255.0
 
-func (c *sdl2Controller) snapshot() {
+// snapshot reads the controller, and reports whether it shows a tap that has
+// already been released.
+func (c *sdl2Controller) snapshot() bool {
+	var latched bool
 	for i := range c.axes {
 		v := float64(c.controller.Axis(i)) / 32767
+		if c.triggerSince[i] > v { // only triggers are ever latched
+			v, latched = c.triggerSince[i], true
+		}
+		c.triggerSince[i] = 0
 		c.axes[i] = max(-1, min(1, v))
 	}
 	for i := range c.buttons {
 		c.buttons[i] = c.controller.Button(i)
+		if !c.buttons[i] && c.pressedSince[i] {
+			c.buttons[i], latched = true, true
+		}
+		c.pressedSince[i] = false
 	}
 
 	for _, a := range [...]struct {
@@ -272,4 +322,5 @@ func (c *sdl2Controller) snapshot() {
 		v := max(0, c.axes[t.axis])
 		c.standardButtons[t.standard] = gamepad.VirtualStandardGamepadButton{Pressed: v > triggerPressThreshold, Value: v}
 	}
+	return latched
 }

@@ -28,6 +28,9 @@ import (
 const InitGameController = 0x00002000
 
 const (
+	EventControllerAxisMotion     = 0x650
+	EventControllerButtonDown     = 0x651
+	EventControllerButtonUp       = 0x652
 	EventControllerDeviceAdded    = 0x653
 	EventControllerDeviceRemoved  = 0x654
 	EventControllerDeviceRemapped = 0x655
@@ -87,6 +90,21 @@ var (
 // joystick instance ID (for a removed or remapped one).
 func (e *Event) ControllerDevice() int32 {
 	return e.i32(8)
+}
+
+// ControllerButton is the button of a controller button event.
+func (e *Event) ControllerButton() int {
+	return int(e.u8(12))
+}
+
+// ControllerAxis is the axis of a controller axis event.
+func (e *Event) ControllerAxis() int {
+	return int(e.u8(12))
+}
+
+// ControllerAxisValue is the value of a controller axis event.
+func (e *Event) ControllerAxisValue() int16 {
+	return int16(e.u16(16))
 }
 
 func IsGameController(joystickIndex int) bool {
