@@ -19,10 +19,12 @@ package ui
 import (
 	stdcontext "context"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -295,7 +297,31 @@ func (b *sdl2Backend) loopGame() error {
 	}
 }
 
+// slowFrame is the frame time above which updateGame logs where the time
+// went (polling, the frame itself and, inside it, SDL_GL_SwapWindow), at most
+// once a second: on KMS/DRM handhelds, the hitches that the game itself
+// cannot see (its Update and Draw are short) are here.
+const slowFrame = 40 * time.Millisecond
+
+// lastSwap is how long the last SDL_GL_SwapWindow took, in nanoseconds.
+var lastSwap atomic.Int64
+
+// lastSlowLog is when updateGame last logged a slow frame.
+var lastSlowLog time.Time
+
 func (b *sdl2Backend) updateGame() error {
+	start := time.Now()
+	var polled, padded time.Time
+	defer func() {
+		total := time.Since(start)
+		if total < slowFrame || time.Since(lastSlowLog) < time.Second {
+			return
+		}
+		lastSlowLog = time.Now()
+		ms := func(d time.Duration) string { return fmt.Sprintf("%.1fms", float64(d)/float64(time.Millisecond)) }
+		log.Printf("sdl2: slow frame %s: poll %s, gamepads %s, frame %s (SDL_GL_SwapWindow %s)",
+			ms(total), ms(polled.Sub(start)), ms(padded.Sub(polled)), ms(time.Since(padded)), ms(time.Duration(lastSwap.Load())))
+	}()
 	for {
 		thread.CallWithArg(b.mainThread, (*sdl2Backend).pollOnMainThread, b)
 		if b.closeRequested {
@@ -314,9 +340,11 @@ func (b *sdl2Backend) updateGame() error {
 		break
 	}
 
+	polled = time.Now()
 	if err := gamepad.Update(0, b.gamepads.states); err != nil {
 		return err
 	}
+	padded = time.Now()
 
 	s := b.deviceScaleFactor()
 	return b.context.updateFrame(b.graphicsDriver, float64(b.windowWidth), float64(b.windowHeight), b.drawableWidth, b.drawableHeight, s, b.UserInterface, true)
@@ -584,7 +612,9 @@ func (p *sdl2Presenter) SwapInterval(interval int) error {
 }
 
 func (p *sdl2Presenter) SwapBuffers() error {
+	start := time.Now()
 	sdl2.GLSwapWindow(p.window)
+	lastSwap.Store(int64(time.Since(start)))
 	return nil
 }
 
