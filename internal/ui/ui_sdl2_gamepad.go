@@ -268,7 +268,11 @@ func (c *sdl2Controller) snapshot() bool {
 	var latched bool
 	for i := range c.axes {
 		v := float64(c.controller.Axis(i)) / 32767
-		if c.triggerSince[i] > v { // only triggers are ever latched
+		// Only triggers are ever latched. A stick axis must not be compared
+		// with its zero triggerSince: that would turn every negative value
+		// (left, up) into 0, and report a latched tap on every snapshot.
+		isTrigger := i == sdl2.ControllerAxisTriggerLeft || i == sdl2.ControllerAxisTriggerRight
+		if isTrigger && c.triggerSince[i] > v {
 			v, latched = c.triggerSince[i], true
 		}
 		c.triggerSince[i] = 0
