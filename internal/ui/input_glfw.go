@@ -326,6 +326,18 @@ func (u *glfwBackend) registerInputCallbacks() error {
 		return err
 	}
 
+	// The cursor might already be over the window when it is created.
+	hovered, err := u.window.GetAttrib(glfw.Hovered)
+	if err != nil {
+		return err
+	}
+	u.cursorInWindow.Store(hovered == glfw.True)
+	if _, err := u.window.SetCursorEnterCallback(func(w *glfw.Window, entered bool) {
+		u.cursorInWindow.Store(entered)
+	}); err != nil {
+		return err
+	}
+
 	// The character callback skips the characters that are produced with the modifier combinations
 	// the platform treats as shortcuts, like Ctrl+= on X11 (#3502).
 	if _, err := u.window.SetCharCallback(func(w *glfw.Window, char rune) {

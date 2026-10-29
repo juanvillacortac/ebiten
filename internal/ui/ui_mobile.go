@@ -241,6 +241,10 @@ func (u *UserInterface) SetCursorMode(mode CursorMode) {
 	// Do nothing
 }
 
+func (u *UserInterface) IsCursorInWindow() bool {
+	return true
+}
+
 func (u *UserInterface) CursorShape() CursorShape {
 	return CursorShapeDefault
 }

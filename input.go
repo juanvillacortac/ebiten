@@ -122,6 +122,15 @@ func CursorPositionF() (x, y float64) {
 	return inputstate.Get().CursorPosition()
 }
 
+// IsCursorInWindow reports whether the mouse cursor is over the window.
+//
+// IsCursorInWindow always returns true on platforms that can't tell, like browsers and mobiles.
+//
+// IsCursorInWindow is concurrent-safe.
+func IsCursorInWindow() bool {
+	return ui.Get().IsCursorInWindow()
+}
+
 // Wheel returns x and y offsets of the mouse wheel or touchpad scroll.
 // It returns 0 if the wheel isn't being rolled.
 //

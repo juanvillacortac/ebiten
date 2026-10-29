@@ -24,6 +24,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -57,6 +58,9 @@ type glfwBackend struct {
 	*UserInterface
 
 	window *glfw.Window
+
+	// cursorInWindow reports whether the mouse cursor is over the window.
+	cursorInWindow atomic.Bool
 
 	lastDeviceScaleFactor float64
 
@@ -2650,4 +2654,9 @@ func (u *glfwBackend) runSingleThread(game Game, options *RunOptions) error {
 
 func dipToNativePixels(x float64, scale float64) float64 {
 	return dipToGLFWPixel(x, scale)
+}
+
+// isCursorInWindow reports whether the mouse cursor is over the window.
+func (u *glfwBackend) isCursorInWindow() bool {
+	return u.cursorInWindow.Load()
 }

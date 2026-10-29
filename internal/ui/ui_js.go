@@ -265,6 +265,10 @@ func (u *UserInterface) recoverCursorMode() {
 	u.SetCursorMode(u.cursorPrevMode)
 }
 
+func (u *UserInterface) IsCursorInWindow() bool {
+	return true
+}
+
 func (u *UserInterface) CursorShape() CursorShape {
 	if !canvas.Truthy() {
 		return CursorShapeDefault

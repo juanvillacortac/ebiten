@@ -343,6 +343,16 @@ func (u *UserInterface) SetCursorShape(shape CursorShape) {
 	b.applyCursorShape()
 }
 
+// IsCursorInWindow reports whether the mouse cursor is over the window.
+// Backends that can't tell report true.
+func (u *UserInterface) IsCursorInWindow() bool {
+	b, ok := u.runningBackend().(interface{ isCursorInWindow() bool })
+	if !ok {
+		return true
+	}
+	return b.isCursorInWindow()
+}
+
 func (u *UserInterface) Window() Window {
 	if microsoftgdk.IsXbox() {
 		return &nullWindow{}
